@@ -46,12 +46,29 @@ export const loginUser = async (
   const normalizedEmail = email.toLowerCase();
 
   try {
+    // avatarUrl/dateOfBirth/balance no longer live on User — they live on
+    // GeneralUserProfile (buyers) or SellerProfile (sellers), so both must
+    // be included and the right one picked based on role.
     const user = await prisma.user.findUnique({
       where: { email: normalizedEmail },
       include: {
+        generalUserProfile: {
+          select: {
+            id: true,
+            avatarUrl: true,
+            dateOfBirth: true,
+            balance: true,
+            loyaltyPoints: true,
+            discountPoints: true,
+            promoCode: true,
+          },
+        },
         sellerProfile: {
           select: {
             id: true,
+            avatarUrl: true,
+            dateOfBirth: true,
+            balance: true,
             shopName: true,
             shopSlug: true,
             verificationStatus: true,
@@ -131,6 +148,18 @@ export const loginUser = async (
       console.error("Failed to save refresh token:", tokenError);
     }
 
+    // Pick avatar/DOB from whichever profile this role actually has.
+    // Admin/Moderator/Super Admin have neither profile yet, so both fall
+    // back to null until their own profile model exists.
+    const avatarUrl =
+      user.generalUserProfile?.avatarUrl ??
+      user.sellerProfile?.avatarUrl ??
+      null;
+    const dateOfBirth =
+      user.generalUserProfile?.dateOfBirth ??
+      user.sellerProfile?.dateOfBirth ??
+      null;
+
     response.status(200).json({
       message: "Login successful",
       data: {
@@ -141,8 +170,10 @@ export const loginUser = async (
           phone: user.phone,
           role: user.role,
           status: user.status,
-          avatarUrl: user.avatarUrl,
+          avatarUrl,
+          dateOfBirth,
           createdAt: user.createdAt,
+          generalUserProfile: user.generalUserProfile,
           sellerProfile: user.sellerProfile,
         },
         accessToken,
