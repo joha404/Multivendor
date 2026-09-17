@@ -1,0 +1,1 @@
+{"version":3,"file":"email.d.ts","sourceRoot":"","sources":["../../src/utils/email.ts"],"names":[],"mappings":"AAEA,MAAM,WAAW,gBAAgB;IAC/B,EAAE,EAAE,MAAM,CAAC;IACX,OAAO,EAAE,MAAM,CAAC;IAChB,IAAI,EAAE,MAAM,CAAC;IACb,IAAI,CAAC,EAAE,MAAM,GAAG,SAAS,CAAC;CAC3B;AA+BD,eAAO,MAAM,SAAS,gCAAuC,gBAAgB,KAAG,OAAO,CAAC,IAAI,CAc3F,CAAC"}

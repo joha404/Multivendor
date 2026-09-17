@@ -1,0 +1,738 @@
+// ============================================================================
+// Multivendor E-commerce Platform — Prisma Schema
+// মাল্টিভেন্ডর ই-কমার্স প্ল্যাটফর্ম — প্রিজমা স্কিমা
+// ============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// ENUMS
+// ============================================================================
+
+enum Role {
+  SUPER_ADMIN
+  ADMIN
+  MODERATOR
+  SELLER
+  GENERAL_USER
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  BANNED
+  DELETED
+}
+
+enum SellerVerificationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  SUSPENDED
+}
+
+enum ProductStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum ListingStatus {
+  PENDING_REVIEW
+  APPROVED
+  REJECTED
+  PAUSED // seller নিজে temporarily বন্ধ রাখলে
+}
+
+enum ProductRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  PACKED
+  SHIPPED
+  DELIVERED
+  CANCELLED
+  RETURN_REQUESTED
+  RETURNED
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+  REFUNDED
+}
+
+enum PaymentMethod {
+  COD
+  SSLCOMMERZ
+  BKASH
+  STRIPE
+}
+
+enum PayoutStatus {
+  PENDING
+  PROCESSING
+  PAID
+  FAILED
+}
+
+enum AttributeInputType {
+  TEXT
+  COLOR
+  NUMBER
+}
+
+// ============================================================================
+// USER & AUTH
+// ============================================================================
+
+// English: Core account for every person on the platform, regardless of role.
+// Address and Notification stay HERE (not on GeneralUserProfile) because
+// Sellers/Admins/Moderators need addresses and notifications too — only
+// buyer-only concerns (cart, wishlist, orders, reviews) live on
+// GeneralUserProfile. Admin/Moderator will get their own profile models later.
+// বাংলা: প্ল্যাটফর্মের প্রতিটি ইউজারের মূল অ্যাকাউন্ট, রোল যাই হোক না কেন।
+// Address ও Notification এখানেই থাকছে (GeneralUserProfile-এ না) কারণ
+// Seller/Admin/Moderator-এরও address ও notification দরকার হয় — শুধু buyer-only
+// জিনিস (cart, wishlist, orders, reviews) GeneralUserProfile-এ যাবে।
+// Admin/Moderator-এর জন্য আলাদা প্রোফাইল মডেল পরে বানানো হবে।
+model User {
+  id       String     @id @default(uuid())
+  name     String
+  email    String     @unique
+  phone    String?    @unique
+  password String
+  role     Role       @default(GENERAL_USER)
+  status   UserStatus @default(ACTIVE)
+
+  isDeleted Boolean   @default(false)
+  deletedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  generalUserProfile      GeneralUserProfile?
+  sellerProfile           SellerProfile?
+  addresses               Address[]
+  notifications           Notification[]
+  auditLogs               AuditLog[]          @relation("ActorAuditLogs")
+  refreshTokens           RefreshToken[]
+  productsCreated         Product[]           @relation("ProductCreatedByAdmin")
+  productRequestsReviewed ProductRequest[]    @relation("ProductRequestReviewedBy")
+  listingsReviewed        SellerListing[]     @relation("ListingReviewedBy")
+  sellerVerifiedBy        SellerProfile[]     @relation("SellerVerifiedBy")
+
+  @@index([role])
+  @@index([isDeleted])
+}
+
+// A registration remains here until its email code is verified. Passwords and
+// codes are stored only as hashes; a User record is created after verification.
+model PendingRegistration {
+  id                        String   @id @default(uuid())
+  name                      String
+  email                     String   @unique
+  phone                     String?  @unique
+  passwordHash              String
+  verificationCodeHash      String
+  verificationCodeExpiresAt DateTime
+  verificationCodeSentAt    DateTime @default(now())
+  verificationAttempts      Int      @default(0)
+  createdAt                 DateTime @default(now())
+  updatedAt                 DateTime @updatedAt
+
+  @@index([verificationCodeExpiresAt])
+}
+
+model PasswordReset {
+  id            String   @id @default(uuid())
+  email         String   @unique
+  codeHash      String
+  codeExpiresAt DateTime
+  codeSentAt    DateTime @default(now())
+  attempts      Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([codeExpiresAt])
+}
+
+// English: Stores JWT refresh tokens so they can be revoked (logout / security).
+// বাংলা: JWT refresh token সংরক্ষণ করে, যাতে দরকার হলে revoke (logout/নিরাপত্তা) করা যায়।
+model RefreshToken {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+// English: A buyer/seller can have multiple shipping/business addresses.
+// Stays on User because both GENERAL_USER (shipping) and SELLER (warehouse/
+// business) need addresses.
+// বাংলা: একজন ইউজারের একাধিক শিপিং/বিজনেস ঠিকানা থাকতে পারে। User-এ থাকছে
+// কারণ GENERAL_USER (শিপিং) এবং SELLER (গুদাম/বিজনেস) দুজনেরই address দরকার।
+model Address {
+  id          String  @id @default(uuid())
+  userId      String
+  user        User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  label       String? // "Home", "Office", "Warehouse"
+  addressLine String
+  city        String
+  district    String?
+  postalCode  String?
+  country     String  @default("Bangladesh")
+  phone       String?
+  isDefault   Boolean @default(false)
+
+  createdAt DateTime @default(now())
+
+  ordersShippedHere Order[]
+
+  @@index([userId])
+}
+
+// ============================================================================
+// GENERAL USER PROFILE
+// ============================================================================
+
+// English: Extra profile info for users with role=GENERAL_USER (buyers).
+// Created automatically after email verification. Holds personal profile
+// fields (avatar, DOB, wallet balance), loyalty/reward fields (points,
+// discount points, promo code), and every buyer-only relation (cart,
+// wishlist, orders, reviews) — none of these apply to Sellers/Admins.
+// বাংলা: জেনারেল ইউজারের (ক্রেতা) অতিরিক্ত প্রোফাইল তথ্য। ইমেইল ভেরিফিকেশনের পর
+// স্বয়ংক্রিয়ভাবে তৈরি হয়। এখানে ব্যক্তিগত প্রোফাইল ফিল্ড (avatar, DOB, wallet
+// balance), loyalty/reward ফিল্ড (points, discount points, promo code), এবং
+// buyer-only সব রিলেশন (cart, wishlist, orders, reviews) থাকবে — এগুলো
+// Seller/Admin-এর জন্য প্রযোজ্য না।
+model GeneralUserProfile {
+  id     String @id @default(uuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Personal profile fields
+  avatarUrl   String? // Profile image URL (Cloudinary)
+  dateOfBirth DateTime? // Date of birth
+  balance     Decimal   @default(0) @db.Decimal(12, 2) // Wallet balance (BDT)
+
+  // Loyalty & rewards
+  loyaltyPoints  Int     @default(0) // Earned reward points
+  discountPoints Int     @default(0) // Points usable as discount
+  promoCode      String? @unique // Personal/referral promo code
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Buyer-only relations
+  cart     Cart?
+  wishlist Wishlist?
+  orders   Order[]   @relation("BuyerOrders")
+  reviews  Review[]
+}
+
+// ============================================================================
+// SELLER
+// ============================================================================
+
+// English: Extra business info attached to a User with role=SELLER. Holds
+// personal profile fields (avatar, DOB, wallet balance) plus shop/business
+// info and KYC verification documents (NID, utility bill).
+// বাংলা: role=SELLER এমন User-এর সাথে জড়িত অতিরিক্ত বিজনেস তথ্য। এখানে
+// ব্যক্তিগত প্রোফাইল ফিল্ড (avatar, DOB, wallet balance) এবং shop/business
+// তথ্য ও KYC ভেরিফিকেশন ডকুমেন্ট (NID, utility bill) সবই থাকবে।
+model SellerProfile {
+  id     String @id @default(uuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Personal profile fields
+  avatarUrl   String? // Profile image URL (Cloudinary)
+  dateOfBirth DateTime? // Date of birth
+  balance     Decimal   @default(0) @db.Decimal(12, 2) // Wallet balance (BDT)
+
+  // Shop info
+  shopName    String
+  shopSlug    String  @unique
+  shopLogoUrl String?
+
+  // KYC / Verification documents
+  nidDocumentUrl String? // NID (National ID Card) document URL
+  nidNumber      String? // NID number (optional, for reference)
+  utilityBillUrl String? // Utility bill document URL (address proof)
+
+  commissionRate Decimal @default(10.0) @db.Decimal(5, 2) // percentage
+
+  verificationStatus SellerVerificationStatus @default(PENDING)
+  verifiedById       String?
+  verifiedBy         User?                    @relation("SellerVerifiedBy", fields: [verifiedById], references: [id])
+  verifiedAt         DateTime?
+  rejectionReason    String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  listings        SellerListing[]
+  productRequests ProductRequest[]
+  orderItems      OrderItem[]
+  payouts         Payout[]
+
+  @@index([verificationStatus])
+}
+
+// ============================================================================
+// CATALOG — Category / Product / Variant (Admin-owned only)
+// ============================================================================
+
+// English: Self-referencing category tree — Category, Sub-category, Sub-sub-category
+// all live in this one table via parentId, so depth is unlimited.
+// বাংলা: Self-referencing category tree — Category, Sub-category, Sub-sub-category
+// সবই parentId দিয়ে একই টেবিলে থাকবে, তাই depth সীমাহীন।
+model Category {
+  id       String     @id @default(uuid())
+  name     String
+  slug     String     @unique
+  imageUrl String?
+  parentId String?
+  parent   Category?  @relation("CategoryToSubcategory", fields: [parentId], references: [id])
+  children Category[] @relation("CategoryToSubcategory")
+
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  products Product[]
+
+  @@index([parentId])
+}
+
+// English: Master catalog product — created ONLY by Admin/Super Admin.
+// Sellers never write here directly; enforce with role middleware at the API layer.
+// বাংলা: মাস্টার ক্যাটালগ প্রোডাক্ট — শুধুমাত্র Admin/Super Admin তৈরি করবে।
+// সেলার এখানে সরাসরি কখনো লিখবে না; API লেয়ারে role middleware দিয়ে এটা enforce করুন।
+model Product {
+  id          String        @id @default(uuid())
+  name        String
+  slug        String        @unique
+  description String
+  brand       String?
+  status      ProductStatus @default(DRAFT)
+
+  categoryId String
+  category   Category @relation(fields: [categoryId], references: [id])
+
+  createdByAdminId String
+  createdByAdmin   User   @relation("ProductCreatedByAdmin", fields: [createdByAdminId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  variants             ProductVariant[]
+  images               ProductImage[]
+  reviews              Review[]
+  productRequestSource ProductRequest? // if this product originated from a seller request
+
+  @@index([categoryId])
+  @@index([status])
+}
+
+model ProductImage {
+  id        String  @id @default(uuid())
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  url       String
+  sortOrder Int     @default(0)
+
+  @@index([productId])
+}
+
+// English: A reusable attribute type, e.g. "Color", "Size", "Weight".
+// Admin can add new attribute types without touching code.
+// বাংলা: reusable অ্যাট্রিবিউট টাইপ, যেমন "Color", "Size", "Weight"।
+// কোড না বদলিয়েই Admin নতুন অ্যাট্রিবিউট টাইপ যোগ করতে পারবে।
+model VariantAttribute {
+  id        String             @id @default(uuid())
+  name      String             @unique // "Color", "Size", "Weight"
+  inputType AttributeInputType @default(TEXT)
+
+  values VariantAttributeValue[]
+}
+
+// English: A concrete value for an attribute, e.g. "Red", "XL", "1kg".
+// বাংলা: একটা অ্যাট্রিবিউটের নির্দিষ্ট মান, যেমন "Red", "XL", "1kg"।
+model VariantAttributeValue {
+  id          String           @id @default(uuid())
+  attributeId String
+  attribute   VariantAttribute @relation(fields: [attributeId], references: [id], onDelete: Cascade)
+  value       String // "Red", "XL", "1kg"
+
+  variantLinks ProductVariantAttributeValue[]
+
+  @@unique([attributeId, value])
+}
+
+// English: A sellable unit of a Product, e.g. "Red / Large" or "1kg".
+// This is CATALOG-ONLY — no price/stock here. Price & stock live on SellerListing,
+// because multiple sellers can sell the same catalog variant at different prices.
+// বাংলা: একটা Product-এর বিক্রয়যোগ্য ইউনিট, যেমন "Red / Large" বা "1kg"।
+// এটা শুধু ক্যাটালগ ডেফিনিশন — এখানে দাম/স্টক নেই। দাম ও স্টক SellerListing-এ থাকবে,
+// কারণ একই ক্যাটালগ variant একাধিক সেলার ভিন্ন দামে বিক্রি করতে পারে।
+model ProductVariant {
+  id        String  @id @default(uuid())
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  sku       String  @unique // internal catalog SKU, distinct from seller SKU
+  imageUrl  String?
+  isActive  Boolean @default(true)
+
+  createdAt DateTime @default(now())
+
+  attributeValues ProductVariantAttributeValue[]
+  sellerListings  SellerListing[]
+  orderItems      OrderItem[]
+
+  @@index([productId])
+}
+
+// English: Join table — a ProductVariant is defined by a combination of
+// attribute values (e.g. Color=Red AND Size=Large).
+// বাংলা: জয়েন টেবিল — একটা ProductVariant গঠিত হয় একাধিক অ্যাট্রিবিউট ভ্যালুর
+// কম্বিনেশন দিয়ে (যেমন Color=Red এবং Size=Large একসাথে)।
+model ProductVariantAttributeValue {
+  id               String                @id @default(uuid())
+  productVariantId String
+  productVariant   ProductVariant        @relation(fields: [productVariantId], references: [id], onDelete: Cascade)
+  attributeValueId String
+  attributeValue   VariantAttributeValue @relation(fields: [attributeValueId], references: [id], onDelete: Cascade)
+
+  @@unique([productVariantId, attributeValueId])
+}
+
+// ============================================================================
+// SELLER LISTINGS — Sellers "join" existing catalog variants, never create products
+// ============================================================================
+
+// English: A Seller's own price/stock/status for an existing catalog ProductVariant.
+// This is the ONLY table Sellers can write to for selling — they cannot touch
+// Product / ProductVariant directly. Multiple SellerListings can point to the
+// same ProductVariant (Amazon/Daraz "Buy Box" style — different sellers, different price).
+// বাংলা: একটা এক্সিস্টিং ক্যাটালগ ProductVariant-এর জন্য সেলারের নিজস্ব দাম/স্টক/স্ট্যাটাস।
+// বিক্রির জন্য সেলার শুধু এই টেবিলেই লিখতে পারবে — Product/ProductVariant-এ সরাসরি
+// হাত দিতে পারবে না। একই ProductVariant-এ একাধিক SellerListing থাকতে পারে
+// (Amazon/Daraz "Buy Box" স্টাইল — ভিন্ন সেলার, ভিন্ন দাম)।
+model SellerListing {
+  id               String         @id @default(uuid())
+  sellerId         String
+  seller           SellerProfile  @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+  productVariantId String
+  productVariant   ProductVariant @relation(fields: [productVariantId], references: [id], onDelete: Cascade)
+
+  sellerSku      String? // seller's own internal SKU (optional)
+  price          Decimal       @db.Decimal(10, 2)
+  compareAtPrice Decimal?      @db.Decimal(10, 2) // "was" price for discount display
+  stock          Int           @default(0)
+  status         ListingStatus @default(PENDING_REVIEW)
+
+  reviewedById    String?
+  reviewedBy      User?     @relation("ListingReviewedBy", fields: [reviewedById], references: [id])
+  reviewedAt      DateTime?
+  rejectionReason String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  orderItems    OrderItem[]
+  cartItems     CartItem[]
+  wishlistItems WishlistItem[]
+
+  @@unique([sellerId, productVariantId]) // one seller can list a given variant only once
+  @@index([productVariantId])
+  @@index([sellerId])
+  @@index([status])
+}
+
+// English: A Seller's request to have Admin add a brand-new Product/Variant
+// to the catalog, since Sellers cannot create products themselves.
+// বাংলা: সেলার নতুন প্রোডাক্ট নিজে তৈরি করতে পারে না বলে, Admin-কে ক্যাটালগে
+// নতুন Product/Variant যোগ করার জন্য সেলারের অনুরোধ।
+model ProductRequest {
+  id       String        @id @default(uuid())
+  sellerId String
+  seller   SellerProfile @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+
+  proposedName       String
+  proposedCategoryId String?
+  proposedBrand      String?
+  proposedAttributes Json? // freeform suggested attributes/variants from seller
+  sampleImageUrls    String[]
+  description        String?
+
+  status          ProductRequestStatus @default(PENDING)
+  reviewedById    String?
+  reviewedBy      User?                @relation("ProductRequestReviewedBy", fields: [reviewedById], references: [id])
+  reviewedAt      DateTime?
+  rejectionReason String?
+
+  resultingProductId String?  @unique
+  resultingProduct   Product? @relation(fields: [resultingProductId], references: [id])
+
+  createdAt DateTime @default(now())
+
+  @@index([sellerId])
+  @@index([status])
+}
+
+// ============================================================================
+// CART & WISHLIST
+// ============================================================================
+
+// English: Belongs to GeneralUserProfile, not User directly — only buyers
+// have a cart.
+// বাংলা: User না, GeneralUserProfile-এর সাথে যুক্ত — শুধু buyer-দেরই কার্ট থাকে।
+model Cart {
+  id                   String             @id @default(uuid())
+  generalUserProfileId String             @unique
+  generalUserProfile   GeneralUserProfile @relation(fields: [generalUserProfileId], references: [id], onDelete: Cascade)
+  items                CartItem[]
+  updatedAt            DateTime           @updatedAt
+}
+
+model CartItem {
+  id              String        @id @default(uuid())
+  cartId          String
+  cart            Cart          @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  sellerListingId String
+  sellerListing   SellerListing @relation(fields: [sellerListingId], references: [id], onDelete: Cascade)
+  quantity        Int           @default(1)
+
+  addedAt DateTime @default(now())
+
+  @@unique([cartId, sellerListingId])
+}
+
+// English: Belongs to GeneralUserProfile, not User directly — only buyers
+// have a wishlist.
+// বাংলা: User না, GeneralUserProfile-এর সাথে যুক্ত — শুধু buyer-দেরই wishlist থাকে।
+model Wishlist {
+  id                   String             @id @default(uuid())
+  generalUserProfileId String             @unique
+  generalUserProfile   GeneralUserProfile @relation(fields: [generalUserProfileId], references: [id], onDelete: Cascade)
+  items                WishlistItem[]
+}
+
+model WishlistItem {
+  id              String        @id @default(uuid())
+  wishlistId      String
+  wishlist        Wishlist      @relation(fields: [wishlistId], references: [id], onDelete: Cascade)
+  sellerListingId String
+  sellerListing   SellerListing @relation(fields: [sellerListingId], references: [id], onDelete: Cascade)
+
+  addedAt DateTime @default(now())
+
+  @@unique([wishlistId, sellerListingId])
+}
+
+// ============================================================================
+// ORDERS & PAYMENT
+// ============================================================================
+
+// English: One Order per checkout by a Buyer (GeneralUserProfile). It can
+// contain items from multiple sellers — OrderItem carries its own sellerId
+// so items can be grouped/fulfilled per seller (sub-order style) even though
+// they share one Order + one Payment. shippingAddressId still points at
+// Address on User, since that's where every address lives.
+// বাংলা: একজন Buyer-এর (GeneralUserProfile) প্রতিটা checkout-এ একটা Order।
+// এতে একাধিক সেলারের আইটেম থাকতে পারে — OrderItem-এর নিজস্ব sellerId থাকবে
+// যাতে sub-order আকারে প্রতি সেলার আলাদাভাবে fulfill করতে পারে, যদিও Order ও
+// Payment একটাই থাকবে। shippingAddressId এখনও User-এর Address-কে পয়েন্ট
+// করে, কারণ সব address ওখানেই থাকে।
+model Order {
+  id          String             @id @default(uuid())
+  orderNumber String             @unique // human-readable, e.g. ORD-20260915-0001
+  buyerId     String
+  buyer       GeneralUserProfile @relation("BuyerOrders", fields: [buyerId], references: [id])
+
+  shippingAddressId String
+  shippingAddress   Address @relation(fields: [shippingAddressId], references: [id])
+
+  status      OrderStatus @default(PENDING)
+  subtotal    Decimal     @db.Decimal(10, 2)
+  shippingFee Decimal     @default(0) @db.Decimal(10, 2)
+  discount    Decimal     @default(0) @db.Decimal(10, 2)
+  total       Decimal     @db.Decimal(10, 2)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  items   OrderItem[]
+  payment Payment?
+
+  @@index([buyerId])
+  @@index([status])
+}
+
+// English: One line item, always tied to exactly one seller (via sellerId +
+// sellerListingId), so per-seller fulfillment & commission is straightforward.
+// বাংলা: একটা লাইন আইটেম, সবসময় একটা নির্দিষ্ট সেলারের সাথে যুক্ত (sellerId +
+// sellerListingId দিয়ে), যাতে প্রতি-সেলার fulfillment ও কমিশন হিসাব সহজ হয়।
+model OrderItem {
+  id      String @id @default(uuid())
+  orderId String
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  sellerListingId  String
+  sellerListing    SellerListing  @relation(fields: [sellerListingId], references: [id])
+  productVariantId String
+  productVariant   ProductVariant @relation(fields: [productVariantId], references: [id])
+  sellerId         String
+  seller           SellerProfile  @relation(fields: [sellerId], references: [id])
+
+  quantity        Int
+  priceAtPurchase Decimal     @db.Decimal(10, 2) // snapshot, in case seller changes price later
+  status          OrderStatus @default(PENDING) // fulfillment status per seller sub-order
+
+  commission Commission?
+
+  @@index([orderId])
+  @@index([sellerId])
+}
+
+model Payment {
+  id      String @id @default(uuid())
+  orderId String @unique
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  method          PaymentMethod
+  status          PaymentStatus @default(PENDING)
+  transactionId   String?       @unique
+  paidAmount      Decimal?      @db.Decimal(10, 2)
+  gatewayResponse Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ============================================================================
+// COMMISSION / PAYOUT
+// ============================================================================
+
+// English: Platform's cut on a single OrderItem, calculated once the item is
+// delivered (or per your business rule). Feeds into Payout batches.
+// বাংলা: একটা OrderItem-এ প্ল্যাটফর্মের কমিশন, item ডেলিভার হলে (বা আপনার
+// বিজনেস রুল অনুযায়ী) হিসাব হবে। এটাই পরে Payout ব্যাচে যোগ হবে।
+model Commission {
+  id          String    @id @default(uuid())
+  orderItemId String    @unique
+  orderItem   OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+
+  rate          Decimal @db.Decimal(5, 2) // % at the time of calculation
+  amount        Decimal @db.Decimal(10, 2) // platform's share
+  sellerEarning Decimal @db.Decimal(10, 2) // seller's share
+
+  createdAt DateTime @default(now())
+}
+
+// English: A batched payout of accumulated seller earnings (e.g. weekly/monthly).
+// বাংলা: জমে থাকা সেলার আয়ের একটা ব্যাচ payout (যেমন সাপ্তাহিক/মাসিক)।
+model Payout {
+  id       String        @id @default(uuid())
+  sellerId String
+  seller   SellerProfile @relation(fields: [sellerId], references: [id])
+
+  amount    Decimal      @db.Decimal(10, 2)
+  status    PayoutStatus @default(PENDING)
+  method    String? // bank transfer, bKash, etc.
+  reference String?
+
+  periodStart DateTime
+  periodEnd   DateTime
+  processedAt DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([sellerId])
+  @@index([status])
+}
+
+// ============================================================================
+// REVIEWS
+// ============================================================================
+
+// English: Belongs to GeneralUserProfile, not User — only buyers write
+// reviews.
+// বাংলা: User না, GeneralUserProfile-এর সাথে যুক্ত — শুধু buyer-রাই রিভিউ লিখে।
+model Review {
+  id        String             @id @default(uuid())
+  productId String
+  product   Product            @relation(fields: [productId], references: [id], onDelete: Cascade)
+  buyerId   String
+  buyer     GeneralUserProfile @relation(fields: [buyerId], references: [id], onDelete: Cascade)
+
+  rating    Int // 1-5
+  comment   String?
+  imageUrls String[]
+
+  createdAt DateTime @default(now())
+
+  @@unique([productId, buyerId]) // one review per buyer per product
+  @@index([productId])
+}
+
+// ============================================================================
+// NOTIFICATIONS & AUDIT LOG
+// ============================================================================
+
+// English: Stays on User (not GeneralUserProfile) since Sellers and
+// Admins/Moderators also receive notifications (listing approved, order
+// received, verification status, etc.).
+// বাংলা: User-এই থাকছে (GeneralUserProfile-এ না) কারণ Seller এবং
+// Admin/Moderator-ও notification পায় (listing approve, order এসেছে,
+// verification status ইত্যাদি)।
+model Notification {
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  title   String
+  message String
+  isRead  Boolean @default(false)
+  link    String? // deep link to relevant order/listing/etc.
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, isRead])
+}
+
+model AuditLog {
+  id      String @id @default(uuid())
+  actorId String
+  actor   User   @relation("ActorAuditLogs", fields: [actorId], references: [id])
+
+  action     String // "APPROVE_LISTING", "BAN_USER", "DELETE_PRODUCT", etc.
+  entityType String // "SellerListing", "Product", "User", etc.
+  entityId   String
+  metadata   Json? // before/after snapshot, reason, etc.
+
+  createdAt DateTime @default(now())
+
+  @@index([actorId])
+  @@index([entityType, entityId])
+}

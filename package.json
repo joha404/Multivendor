@@ -1,0 +1,42 @@
+{
+  "name": "joha",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "prebuild": "prisma generate",
+    "predev": "prisma generate",
+    "dev": "nodemon --watch src --ext ts --exec \"npm run build && node dist/server.js\"",
+    "build": "tsc --outDir dist --rootDir src",
+    "prestart": "prisma generate",
+    "start": "node dist/server.js",
+    "db:push": "prisma db push",
+    "db:migrate": "prisma migrate dev",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@prisma/client": "^5.22.0",
+    "@types/express": "^5.0.6",
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/node": "^26.5.1",
+    "@types/nodemailer": "^8.0.2",
+    "bcryptjs": "^3.0.3",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "jsonwebtoken": "^9.0.3",
+    "prisma": "^5.22.0",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^7.0.2",
+    "zod": "^4.6.5"
+  },
+  "dependencies": {
+    "cloudinary": "^2.11.0",
+    "nodemailer": "^7.0.13",
+    "nodemon": "^3.1.14"
+  }
+}
